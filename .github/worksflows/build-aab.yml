@@ -1,0 +1,54 @@
+name: Build AAB
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # 1️⃣ Checkout repo
+      - uses: actions/checkout@v4
+
+      # 2️⃣ Ensure Android folder exists
+      - name: Check Android folder
+        run: |
+          if [ ! -d "mobile/android" ]; then
+            echo "Error: Android folder not found!"
+            exit 1
+          fi
+
+      # 3️⃣ Generate keystore
+      - name: Generate Keystore
+        run: |
+          keytool -genkeypair -v -keystore app-release.keystore -alias unchainednames \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass changeit -keypass changeit \
+            -dname "CN=Unchained Names, OU=Dev, O=UnchainedNames, L=Unknown, S=Unknown, C=US"
+          echo "Keystore created!"
+
+      # 4️⃣ Build the AAB
+      - name: Build AAB
+        run: |
+          cd mobile/android
+          ./gradlew bundleRelease \
+            -Pandroid.injected.signing.store.file=../../app-release.keystore \
+            -Pandroid.injected.signing.store.password=changeit \
+            -Pandroid.injected.signing.key.alias=unchainednames \
+            -Pandroid.injected.signing.key.password=changeit
+
+      # 5️⃣ Verify AAB exists
+      - name: Verify AAB
+        run: |
+          if [ ! -f mobile/android/app/build/outputs/bundle/release/app-release.aab ]; then
+            echo "Error: .aab not found!"
+            exit 1
+          fi
+          echo "AAB found!"
+
+      # 6️⃣ Upload the artifact
+      - name: Upload AAB
+        uses: actions/upload-artifact@v3
+        with:
+          name: UnchainedNames-AAB
+          path: mobile/android/app/build/outputs/bundle/release/app-release.aab
