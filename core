@@ -1,0 +1,348 @@
+# Root folder structure for GitHub (paste into editor as individual files):
+
+# 1. README.md
+# 2. LICENSE
+# 3. mobile/
+# 4. server/
+# 5. .github/workflows/android-aab.yml
+# 6. scripts/generate_keystore.sh
+
+# -------------------------
+# README.md
+# -------------------------
+# UnchainedNames - Domain Auction Platform
+
+Full React Native + Node.js scaffold for a global domain auction platform.
+
+**Instructions**
+1. Generate Android native project locally (`npx react-native init`) and copy `android/` folder into `mobile/`.
+2. Generate keystore locally: `scripts/generate_keystore.sh`.
+3. Create GitHub secrets: KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD.
+4. Push to GitHub → GitHub Actions will build `.aab` for Play Store.
+
+---
+
+# -------------------------
+# LICENSE
+# -------------------------
+MIT License
+
+---
+
+# -------------------------
+# scripts/generate_keystore.sh
+# -------------------------
+#!/usr/bin/env bash
+keytool -genkeypair -v -keystore my-release-key.keystore -alias unchainednames \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -storepass changeit -keypass changeit \
+  -dname "CN=Unchained Names, OU=Dev, O=UnchainedNames, L=Unknown, S=Unknown, C=US"
+echo "Base64:"
+base64 my-release-key.keystore
+
+---
+
+# -------------------------
+# .github/workflows/android-aab.yml
+# -------------------------
+name: Build Android AAB
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  build-aab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - uses: android-actions/setup-android@v2
+        with:
+          api-level: 33
+          build-tools: '33.0.2'
+
+      - name: Decode Keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > mobile/android/app/app-release.keystore
+
+      - name: Build AAB
+        working-directory: mobile/android
+        run: |
+          ./gradlew bundleRelease -Pandroid.injected.signing.store.file=app/app-release.keystore \
+          -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} \
+          -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} \
+          -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }}
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v3
+        with:
+          name: UnchainedNames-AAB
+          path: mobile/android/app/build/outputs/bundle/release/*.aab
+
+---
+
+# -------------------------
+# mobile/package.json
+# -------------------------
+{
+  "name": "unchainednames-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "react-native start",
+    "android": "react-native run-android",
+    "bundle-android": "react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res/"
+  },
+  "dependencies": {
+    "@react-navigation/native": "^6.1.7",
+    "@react-navigation/stack": "^6.3.16",
+    "axios": "^1.4.0",
+    "react": "18.2.0",
+    "react-native": "0.72.4",
+    "react-native-gesture-handler": "^2.9.0",
+    "react-native-reanimated": "^2.15.0",
+    "react-native-safe-area-context": "^4.5.1",
+    "react-native-screens": "^3.20.0",
+    "react-native-vector-icons": "^9.2.0",
+    "dayjs": "^1.11.8"
+  }
+}
+
+---
+
+# -------------------------
+# mobile/app.json
+# -------------------------
+{
+  "name": "UnchainedNames",
+  "displayName": "UnchainedNames"
+}
+
+---
+
+# -------------------------
+# mobile/index.js
+# -------------------------
+import { AppRegistry } from 'react-native';
+import App from './src/App';
+import { name as appName } from './app.json';
+AppRegistry.registerComponent(appName, () => App);
+
+---
+
+# -------------------------
+# mobile/src/App.js
+# -------------------------
+import React from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import MainStack from './navigation/MainStack';
+export default function App() {
+  return <NavigationContainer><MainStack /></NavigationContainer>;
+}
+
+---
+
+# -------------------------
+# mobile/src/navigation/MainStack.js
+# -------------------------
+import React from 'react';
+import { createStackNavigator } from '@react-navigation/stack';
+import HomeScreen from '../screens/HomeScreen';
+import AuctionScreen from '../screens/AuctionScreen';
+import CreateAuctionScreen from '../screens/CreateAuctionScreen';
+import LoginScreen from '../screens/LoginScreen';
+const Stack = createStackNavigator();
+export default function MainStack() {
+  return (
+    <Stack.Navigator initialRouteName="Home">
+      <Stack.Screen name="Home" component={HomeScreen} />
+      <Stack.Screen name="Auction" component={AuctionScreen} />
+      <Stack.Screen name="Create" component={CreateAuctionScreen} />
+      <Stack.Screen name="Login" component={LoginScreen} />
+    </Stack.Navigator>
+  );
+}
+
+---
+
+# -------------------------
+# mobile/src/screens/HomeScreen.js
+# -------------------------
+import React, { useEffect, useState } from 'react';
+import { View, Text, FlatList, TouchableOpacity } from 'react-native';
+import api from '../services/api';
+import dayjs from 'dayjs';
+export default function HomeScreen({ navigation }) {
+  const [auctions, setAuctions] = useState([]);
+  useEffect(()=>{ fetchAuctions(); }, []);
+  async function fetchAuctions(){
+    try{ const res = await api.get('/auctions'); setAuctions(res.data); }catch(e){ console.error(e); }
+  }
+  return (
+    <View style={{flex:1,padding:16}}>
+      <TouchableOpacity onPress={()=>navigation.navigate('Create')}>
+        <Text style={{fontSize:18,color:'blue'}}>Create Auction</Text>
+      </TouchableOpacity>
+      <FlatList
+        data={auctions}
+        keyExtractor={item=>String(item.id)}
+        renderItem={({item})=>(
+          <TouchableOpacity onPress={()=>navigation.navigate('Auction',{id:item.id})} style={{padding:12,borderBottomWidth:1,borderColor:'#eee'}}>
+            <Text style={{fontWeight:'bold'}}>{item.domain}</Text>
+            <Text>Current: ${item.current_price} • Ends {dayjs(item.ends_at).format('YYYY-MM-DD HH:mm')}</Text>
+          </TouchableOpacity>
+        )}
+      />
+    </View>
+  );
+}
+
+---
+
+# -------------------------
+# mobile/src/screens/AuctionScreen.js
+# -------------------------
+import React, { useEffect, useState } from 'react';
+import { View, Text, TextInput, Button } from 'react-native';
+import api from '../services/api';
+export default function AuctionScreen({ route }) {
+  const { id } = route.params;
+  const [auction, setAuction] = useState(null);
+  const [bid, setBid] = useState('');
+  useEffect(()=>{ load(); }, []);
+  async function load(){ const res = await api.get(`/auctions/${id}`); setAuction(res.data); }
+  async function placeBid(){ await api.post(`/auctions/${id}/bid`,{amount:Number(bid)}); setBid(''); load(); }
+  if(!auction) return <View><Text>Loading...</Text></View>;
+  return (
+    <View style={{flex:1,padding:16}}>
+      <Text style={{fontSize:20,fontWeight:'bold'}}>{auction.domain}</Text>
+      <Text>Current: ${auction.current_price}</Text>
+      <TextInput value={bid} onChangeText={setBid} keyboardType='numeric' placeholder='Enter bid' style={{borderWidth:1,padding:8,marginTop:12}} />
+      <Button title='Place Bid' onPress={placeBid} />
+    </View>
+  );
+}
+
+---
+
+# -------------------------
+# mobile/src/screens/CreateAuctionScreen.js
+# -------------------------
+import React, { useState } from 'react';
+import { View, TextInput, Button, Text } from 'react-native';
+import api from '../services/api';
+export default function CreateAuctionScreen({ navigation }) {
+  const [domain,setDomain]=useState(''); const [starting,setStarting]=useState(''); const [endsAt,setEndsAt]=useState('');
+  async function create(){ await api.post('/auctions',{domain,starting_price:Number(starting),ends_at:endsAt}); navigation.goBack(); }
+  return (
+    <View style={{flex:1,padding:16}}>
+      <Text>Domain</Text>
+      <TextInput value={domain} onChangeText={setDomain} style={{borderWidth:1,padding:8}} />
+      <Text>Starting Price</Text>
+      <TextInput value={starting} onChangeText={setStarting} style={{borderWidth:1,padding:8}} keyboardType='numeric' />
+      <Text>Ends At (ISO)</Text>
+      <TextInput value={endsAt} onChangeText={setEndsAt} style={{borderWidth:1,padding:8}} />
+      <Button title='Create Auction' onPress={create} />
+    </View>
+  );
+}
+
+---
+
+# -------------------------
+# mobile/src/screens/LoginScreen.js
+# -------------------------
+import React, { useState } from 'react';
+import { View, TextInput, Button } from 'react-native';
+import api from '../services/api';
+export default function LoginScreen({ navigation }) {
+  const [email,setEmail]=useState(''); const [password,setPassword]=useState('');
+  async function login(){ await api.post('/auth/login',{email,password}); navigation.navigate('Home'); }
+  return (
+    <View style={{flex:1,padding:16}}>
+      <TextInput placeholder='Email' value={email} onChangeText={setEmail} style={{borderWidth:1,padding:8,marginBottom:8}} />
+      <TextInput placeholder='Password' value={password} onChangeText={setPassword} secureTextEntry style={{borderWidth:1,padding:8,marginBottom:8}} />
+      <Button title='Login' onPress={login} />
+    </View>
+  );
+}
+
+---
+
+# -------------------------
+# mobile/src/services/api.js
+# -------------------------
+import axios from 'axios';
+const api = axios.create({ baseURL: 'http://10.0.2.2:4000/api' });
+export default api;
+
+---
+
+# -------------------------
+# server/package.json
+# -------------------------
+{
+  "name": "unchainednames-server",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": {"start":"node src/index.js"},
+  "dependencies": {
+    "express":"^4.18.2",
+    "better-sqlite3":"^8.2.0",
+    "bcrypt":"^5.1.0",
+    "jsonwebtoken":"^9.0.0",
+    "cors":"^2.8.5",
+    "nodemon":"^2.0.22"
+  }
+}
+
+---
+
+# -------------------------
+# server/src/index.js
+# -------------------------
+const express=require('express'); const cors=require('cors');
+const authRoutes=require('./routes/auth'); const auctionRoutes=require('./routes/auctions');
+const app=express(); app.use(cors()); app.use(express.json());
+app.use('/api/auth',authRoutes); app.use('/api/auctions',auctionRoutes);
+app.listen(4000,()=>console.log('Server running on 4000'));
+
+---
+
+# -------------------------
+# server/src/db.js
+# -------------------------
+const Database=require('better-sqlite3'); const db=new Database('database.sqlite');
+db.prepare(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT,email TEXT UNIQUE,password TEXT)`).run();
+db.prepare(`CREATE TABLE IF NOT EXISTS auctions (id INTEGER PRIMARY KEY AUTOINCREMENT,domain TEXT,starting_price REAL,current_price REAL,ends_at TEXT,seller_id INTEGER)`).run();
+db.prepare(`CREATE TABLE IF NOT EXISTS bids (id INTEGER PRIMARY KEY AUTOINCREMENT,auction_id INTEGER,user_id INTEGER,amount REAL,created_at TEXT)`).run();
+module.exports=db;
+
+---
+
+# -------------------------
+# server/src/routes/auth.js
+# -------------------------
+const express=require('express'); const router=express.Router(); const db=require('../db'); const bcrypt=require('bcrypt');
+router.post('/register',async(req,res)=>{ const {email,password}=req.body; const hash=await bcrypt.hash(password,10); const info=db.prepare('INSERT INTO users (email,password) VALUES (?,?)').run(email,hash); res.json({id:info.lastInsertRowid,email}); });
+router.post('/login',async(req,res)=>{ const {email,password}=req.body; const user=db.prepare('SELECT * FROM users WHERE email=?').get(email); if(!user) return res.status(401).json({error:'no user'}); const ok=await bcrypt.compare(password,user.password); if(!ok) return res.status(401).json({error:'bad'}); res.json({id:user.id,email:user.email}); });
+module.exports=router;
+
+---
+
+# -------------------------
+# server/src/routes/auctions.js
+# -------------------------
+const express=require('express'); const router=express.Router(); const db=require('../db');
+router.get('/',(req,res)=>{ const rows=db.prepare('SELECT * FROM auctions ORDER BY id DESC').all(); res.json(rows); });
+router.post('/',(req,res)=>{ const {domain,starting_price,ends_at}=req.body; const info=db.prepare('INSERT INTO auctions (domain,starting_price,current_price,ends_at) VALUES (?,?,?,?)').run(domain,starting_price,starting_price,ends_at); res.json({id:info.lastInsertRowid,domain,starting_price,ends_at}); });
+router.get('/:id',(req,res)=>{ const id=req.params.id; const row=db.prepare('SELECT * FROM auctions WHERE id=?').get(id); res.json(row); });
+router.post('/:id/bid',(req,res)=>{ const id=req.params.id; const {amount}=req.body; const auction=db.prepare('SELECT * FROM auctions WHERE id=?').get(id); if(!auction) return res.status(404).json({error:'no auction'}); if(amount<=auction.current_price) return res.status(400).json({error:'low bid'}); db.prepare('INSERT INTO bids (auction_id,user_id,amount,created_at) VALUES (?,?,?,datetime("now"))').run(id,1,amount); db.prepare('UPDATE auctions SET current_price=? WHERE id=?').run(amount,id); res.json({ok:true}); });
+module.exports=router;
